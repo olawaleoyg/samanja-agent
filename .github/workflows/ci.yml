@@ -1,0 +1,143 @@
+name: CI
+
+# Runs on every PR and on pushes to main.
+# Order: secret-scan -> dependency-audit -> lint-and-fix -> test -> pipeline (deploy)
+# Each stage only runs if the previous one passes ("needs").
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read  # least-privilege default; elevated only where a job needs it
+
+jobs:
+  # ---------------------------------------------------------------------
+  # 0. Secret scan - runs first and blocks everything else if a secret
+  # (API key, token, credential) is found anywhere in the diff/history.
+  # ---------------------------------------------------------------------
+  secret-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # gitleaks needs full history to scan commits, not just the latest one
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------
+  # 0b. Dependency vulnerability audit - checks runtime + dev dependencies
+  # for known CVEs before anything else runs. Fails the build on any
+  # known vulnerability (not just informational).
+  # ---------------------------------------------------------------------
+  dependency-audit:
+    needs: secret-scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit runtime dependencies
+        run: pip-audit -r requirements.txt
+
+      - name: Audit dev dependencies
+        run: pip-audit -r requirements-dev.txt
+
+  # ---------------------------------------------------------------------
+  # 1. Lint & auto-fix - formats code, fixes what it safely can, and fails
+  # the pipeline if anything is left that needs a human to fix. Also runs
+  # bandit static security analysis.
+  # ---------------------------------------------------------------------
+  lint-and-fix:
+    needs: dependency-audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # only this job needs to commit auto-fixes back to the PR branch
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}  # checkout the PR branch, not detached HEAD
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install lint and security tools
+        run: pip install black ruff bandit
+
+      - name: Auto-fix formatting and lint issues
+        run: |
+          black .
+          ruff check . --fix
+
+      - name: Commit auto-fixes back to the branch (PRs only)
+        if: github.event_name == 'pull_request'
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "style: auto-fix formatting and lint issues [ci]"
+
+      - name: Fail if unfixable lint issues remain
+        run: ruff check .
+
+      - name: Run bandit static security analysis
+        run: bandit -r . -ll -x ./tests
+
+  # ---------------------------------------------------------------------
+  # 2. Tests - only runs once lint-and-fix succeeds.
+  # ---------------------------------------------------------------------
+  test:
+    needs: lint-and-fix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run test suite
+        run: pytest -v
+
+  # ---------------------------------------------------------------------
+  # 3. Pipeline - placeholder for your actual build/deploy steps.
+  # Only runs on pushes to main, and only if lint + tests both passed.
+  # ---------------------------------------------------------------------
+  pipeline:
+    needs: [lint-and-fix, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build / deploy
+        run: |
+          echo "All checks passed - running the real build/deploy steps here."
+          # e.g.: npm run build && vercel --prod
+          # or your agent.py deploy goal
