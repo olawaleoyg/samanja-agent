@@ -1,0 +1,14 @@
+# Gitleaks configuration - extends the default ruleset with project-specific
+# allowlisting so known-safe placeholders (e.g. .env.example) don't false-positive.
+
+title = "devops-agent gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore example/template env files and test fixtures"
+paths = [
+  '.env.example',
+  'tests/.*',
+]

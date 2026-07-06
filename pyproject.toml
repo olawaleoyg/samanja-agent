@@ -1,0 +1,25 @@
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["."]
+omit = ["tests/*", "*/site-packages/*"]
+
+[tool.coverage.report]
+# Best-practice starting threshold for a young test suite: 70%.
+# Ratchet this up (e.g. to 80-85%) as coverage genuinely improves --
+# don't jump straight to a high number on a new suite, or CI will be
+# red for the wrong reasons. Raise the number here AND in ci.yml's
+# --cov-fail-under to keep them in sync.
+fail_under = 70
+show_missing = true
+
+[tool.black]
+line-length = 88
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
